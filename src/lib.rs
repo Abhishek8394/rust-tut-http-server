@@ -27,6 +27,16 @@ impl Worker{
                 println!("Worker {} got job.", id_copy);
                 job();
             }
+            /// Below will make our server serial!
+            /// This is because the mutex lock obtained will remain in scope for duration of block 
+            /// which is when the job runs. So we would have to lock for entire duration of job!
+            /// But we only need to pop job from queue, dont need lock later. Hence the `loop`
+            /// block above, it releases lock as soon as the statement finishes executing.
+            /// Try using below block as main loop, requests will be served serially!
+            // while let Ok(job) = receiver.lock().unwrap().recv(){
+            //     println!("Worker {} got job.", id_copy);
+            //     job();
+            // }
         });
         Worker{id, thread}
     }
