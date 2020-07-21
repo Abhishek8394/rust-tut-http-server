@@ -1,6 +1,6 @@
 use std::thread;
 use std::{error::Error, fmt};
-use std::sync::mpsc;
+use std::sync::{mpsc,Arc,Mutex};
 
 #[derive(Debug)]
 pub struct PoolCreationError;
@@ -11,18 +11,26 @@ impl fmt::Display for PoolCreationError{
     }
 }
 
-struct Job;
+type Job = Box<dyn FnOnce() + Send + 'static>;
 
 struct Worker{
     id: String,
     thread: thread::JoinHandle<()>,
-    recv: mpsc::Receiver<Job>,
 }
 
 impl Worker{
-    fn new(id: String, receiver: mpsc::Receiver<Job>) -> Worker{
-        Worker{id, thread: thread::spawn(||{}), recv: Receiver}
+    fn new(id: String, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker{
+        let id_copy = String::from(&id[..]);
+        let thread = thread::spawn(move||{
+            loop {
+                let job = receiver.lock().unwrap().recv().unwrap();
+                println!("Worker {} got job.", id_copy);
+                job();
+            }
+        });
+        Worker{id, thread}
     }
+
 }
 
 
@@ -46,14 +54,15 @@ impl ThreadPool{
         }
         let mut workers = Vec::with_capacity(size);
         let (sender, receiver) = mpsc::channel();
+        let receiver = Arc::new(Mutex::new(receiver));
         for i in 0..size{
-            workers.push(Worker::new(format!("worker-{}", i), receiver));
+            workers.push(Worker::new(format!("worker-{}", i), Arc::clone(&receiver)));
         }
         return Result::Ok(ThreadPool{workers, sender});
     }
     
-    pub fn execute<F>(&self, f: F) where F: FnOnce() + Send + 'static
-    {    
-                
+    pub fn execute<F>(&self, f: F)  where F: FnOnce() + Send + 'static{
+        let job = Box::new(f);
+        self.sender.send(job).unwrap();
     }
 }
