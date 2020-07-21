@@ -1,13 +1,20 @@
+use http_server::ThreadPool;
+use std::thread;
+use std::time::Duration;
 use std::fs;
 use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
 
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:8888").unwrap();
+    let pool = ThreadPool::new(4).unwrap();
     println!("Listening..");
     for stream in listener.incoming(){
         let stream = stream.unwrap();
-        handle_connection(stream);
+        pool.execute(||{
+            handle_connection(stream);
+        });
+        
     }
 }
 
@@ -17,7 +24,14 @@ fn handle_connection(mut stream: TcpStream){
     // println!("Request\n{}", String::from_utf8_lossy(&buffer[..]));
 
     let get = b"GET / HTTP/1.1\r\n";
+    let sleep = b"GET /sleep HTTP/1.1\r\n";
     let (status, filename) = if buffer.starts_with(get){
+        ("HTTP/1.1 200 OK \r\n\r\n", "index.html")
+    }
+    else if buffer.starts_with(sleep){
+        println!("sleeping for 5.");
+        thread::sleep(Duration::from_secs(5));
+        println!("I'm up.");
         ("HTTP/1.1 200 OK \r\n\r\n", "index.html")
     }
     else{
