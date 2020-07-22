@@ -1,7 +1,8 @@
 use std::thread;
-use std::{error::Error, fmt};
+use std::fmt;
 use std::sync::{mpsc,Arc,Mutex};
 
+/// Custom Pool creation error
 #[derive(Debug)]
 pub struct PoolCreationError;
 
@@ -11,34 +12,53 @@ impl fmt::Display for PoolCreationError{
     }
 }
 
+/// Hold a job, a job is a lambda.
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
+/// Workers listen for jobs indefinitely. We need to send some commands like stop
+/// Below enum wraps commands for workers.
+enum Message{
+    NewJob(Job),
+    Terminate
+}
+
+/// Pool worker.
 struct Worker{
     id: String,
-    thread: thread::JoinHandle<()>,
+    thread: Option<thread::JoinHandle<()>>,
 }
 
 impl Worker{
-    fn new(id: String, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker{
+    fn new(id: String, receiver: Arc<Mutex<mpsc::Receiver<Message>>>) -> Worker{
         let id_copy = String::from(&id[..]);
         let thread = thread::spawn(move||{
             loop {
-                let job = receiver.lock().unwrap().recv().unwrap();
-                println!("Worker {} got job.", id_copy);
-                job();
+                let msg = receiver.lock().unwrap().recv().unwrap();
+                match msg{
+                    Message::NewJob(job) => {
+                        println!("Worker {} got job.", id_copy);
+                        job();
+                    },
+                    Message::Terminate => {
+                        println!("Worker {} got terminate signal.", id_copy);
+                        break;
+                    }
+                }
             }
-            /// Below will make our server serial!
-            /// This is because the mutex lock obtained will remain in scope for duration of block 
-            /// which is when the job runs. So we would have to lock for entire duration of job!
-            /// But we only need to pop job from queue, dont need lock later. Hence the `loop`
-            /// block above, it releases lock as soon as the statement finishes executing.
-            /// Try using below block as main loop, requests will be served serially!
+            println!("Worker: {} has stopped serving requests", id_copy);
+            // Below will make our server serial!
+            // This is because the mutex lock obtained will remain in scope for duration of block 
+            // which is when the job runs. So we would have to lock for entire duration of job!
+            // But we only need to pop job from queue, dont need lock later. Hence the `loop`
+            // block above, it releases lock as soon as the statement finishes executing.
+            // Try using below block as main loop, requests will be served serially!
+            
             // while let Ok(job) = receiver.lock().unwrap().recv(){
             //     println!("Worker {} got job.", id_copy);
             //     job();
             // }
         });
-        Worker{id, thread}
+        Worker{id, thread: Some(thread)}
     }
 
 }
@@ -46,7 +66,7 @@ impl Worker{
 
 pub struct ThreadPool{
     workers: Vec<Worker>,
-    sender: mpsc::Sender<Job>,
+    sender: mpsc::Sender<Message>,
 }
 
 impl ThreadPool{
@@ -73,6 +93,26 @@ impl ThreadPool{
     
     pub fn execute<F>(&self, f: F)  where F: FnOnce() + Send + 'static{
         let job = Box::new(f);
-        self.sender.send(job).unwrap();
+        self.sender.send(Message::NewJob(job)).unwrap();
+    }
+}
+
+impl Drop for ThreadPool{
+    fn drop(&mut self){
+        println!("Sending terminate signal to all workers");
+         for _ in &self.workers {
+            self.sender.send(Message::Terminate).unwrap();
+            // you cannot join on worker immediately here because
+            // the message can be consumed by some other worker!
+            // If that happens, believe it or not, deadlock!
+        }
+        println!("Shutting down workers");
+
+        for worker in &mut self.workers{
+            println!("Shutting down worker: {}", worker.id);
+            if let Some(thread) = worker.thread.take(){
+                thread.join().unwrap();
+            }
+        }
     }
 }

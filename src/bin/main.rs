@@ -9,13 +9,15 @@ fn main() {
     let listener = TcpListener::bind("127.0.0.1:8888").unwrap();
     let pool = ThreadPool::new(4).unwrap();
     println!("Listening..");
-    for stream in listener.incoming(){
+    for stream in listener.incoming().take(2){
         let stream = stream.unwrap();
         pool.execute(||{
             handle_connection(stream);
         });
         
     }
+
+    println!("Shutting down...");
 }
 
 fn handle_connection(mut stream: TcpStream){
@@ -40,5 +42,5 @@ fn handle_connection(mut stream: TcpStream){
     let contents = fs::read_to_string(filename).unwrap();
     let response = format!("{}{}", status, contents);
     stream.write(response.as_bytes()).unwrap();
-    stream.flush();
+    stream.flush().unwrap();
 }
